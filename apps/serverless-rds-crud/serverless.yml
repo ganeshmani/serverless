@@ -1,0 +1,137 @@
+service: serverless-rds-crud
+frameworkVersion: '3'
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-plugin-optimize
+  - serverless-offline
+  - serverless-plugin-scripts
+  # - serverless-plugin-warmup
+
+# custom:
+#   # Enable warmup on all functions (only for production and staging)
+#   warmup:
+#       - production
+#       - staging
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  vpc:
+    securityGroupIds:
+      - !Ref LambdaSecurityGroup
+    subnetIds:
+      - !Ref SubnetA
+      - !Ref SubnetB
+  environment:
+    DB_NAME: ${self:custom.DB_NAME}
+    DB_USER: ${self:custom.DB_USER}
+    DB_PASSWORD: ${self:custom.DB_PASSWORD}
+    DB_HOST: ${self:custom.DB_HOST}
+    DB_PORT: ${self:custom.DB_PORT}
+    NODE_ENV: ${opt:stage, 'production'}
+    MIKRO_ORM_CLI_CONFIG: true
+
+custom:
+  DB_NAME: todo
+  DB_USER: api
+  DB_PASSWORD: development_pass
+  DB_HOST: !GetAtt RDSInstance.Endpoint.Address
+  DB_PORT: !GetAtt RDSInstance.Endpoint.Port
+
+  scripts:
+    hooks:
+      'deploy:function:deploy': npm run migration:prod
+
+package:
+  individually: true
+
+functions:
+  main:
+    handler: src/lambda.handler
+    events:
+      - http:
+          method: any
+          path: /{proxy+}
+
+resources:
+  Resources:
+    LambdaRDSVPC:
+      Type: AWS::EC2::VPC
+      Properties:
+        CidrBlock: '10.0.0.0/16'
+        EnableDnsSupport: true
+        EnableDnsHostnames: true
+    RDSSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: RDS security group
+        VpcId: !Ref LambdaRDSVPC
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 5432
+            ToPort: 5432
+            SourceSecurityGroupId:
+              Ref: LambdaSecurityGroup
+    LambdaSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Lambda security group
+        VpcId: !Ref LambdaRDSVPC
+        SecurityGroupIngress:
+          - IpProtocol: '-1'
+            FromPort: -1
+            ToPort: -1
+            CidrIp: '0.0.0.0/0'
+    SubnetA:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: !Ref LambdaRDSVPC
+        CidrBlock: '10.0.1.0/24'
+        AvailabilityZone:
+          Fn::Select:
+            - 0
+            - Fn::GetAZs: ''
+    SubnetB:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: !Ref LambdaRDSVPC
+        CidrBlock: '10.0.2.0/24'
+        AvailabilityZone:
+          Fn::Select:
+            - 1
+            - Fn::GetAZs: ''
+    RDSInstance:
+      Type: AWS::RDS::DBInstance
+      Properties:
+        DBInstanceIdentifier: TodoRDSInstance
+        AllocatedStorage: '20'
+        DBInstanceClass: db.t3.micro
+        Engine: postgres
+        EngineVersion: '14'
+        MasterUsername: api
+        MasterUserPassword: development_pass
+        DBName: 'todo_db'
+        VPCSecurityGroups:
+          - !GetAtt RDSSecurityGroup.GroupId
+        DBSubnetGroupName: !Ref DBSubnetGroup
+
+    DBSubnetGroup:
+      Type: AWS::RDS::DBSubnetGroup
+      Properties:
+        DBSubnetGroupDescription: Subnet group for RDS
+        SubnetIds:
+          - !Ref SubnetA
+          - !Ref SubnetB
+
+  Outputs:
+    VPCId:
+      Value: !Ref LambdaRDSVPC
+    PublicSubnetA:
+      Value: !Ref SubnetA
+    RDSSecurityGroup:
+      Value: !GetAtt RDSSecurityGroup.GroupId
+    LambdaSecurityGroup:
+      Value: !GetAtt LambdaSecurityGroup.GroupId
+    RDSInstanceEndpoint:
+      Value: !GetAtt RDSInstance.Endpoint.Address
