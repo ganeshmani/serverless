@@ -3,3 +3,4 @@ apps/serverless-rds-crud/dist/
 apps/serverless-rds-crud/.build/
 apps/serverless-rds-crud/.serverless/
 apps/serverless-rds-crud/_warmup/
+.DS_Store
